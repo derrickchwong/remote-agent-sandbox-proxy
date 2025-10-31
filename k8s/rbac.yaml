@@ -1,0 +1,31 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sandbox-proxy
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sandbox-proxy-role
+rules:
+- apiGroups: ["agents.x-k8s.io"]
+  resources: ["sandboxes"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["services", "pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sandbox-proxy-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: sandbox-proxy-role
+subjects:
+- kind: ServiceAccount
+  name: sandbox-proxy
+  namespace: default

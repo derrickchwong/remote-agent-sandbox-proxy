@@ -1,0 +1,21 @@
+{
+  "name": "remote-agent-sandbox-proxy",
+  "version": "1.0.0",
+  "description": "HTTP proxy for routing requests to agent sandboxes in Kubernetes",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsc && node dist/server.js"
+  },
+  "dependencies": {
+    "@kubernetes/client-node": "^0.21.0",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.25",
+    "typescript": "^5.4.5"
+  }
+}
