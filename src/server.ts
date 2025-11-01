@@ -273,6 +273,39 @@ app.post('/api/sandboxes', async (req: Request, res: Response) => {
         },
         spec: {
           serviceAccountName: 'sandbox-gcs-ksa',
+          initContainers: [
+            {
+              name: 'setup-gemini-config',
+              image: 'busybox:latest',
+              command: ['sh', '-c'],
+              args: [
+                `mkdir -p /home/gem/.gemini && cat > /home/gem/.gemini/settings.json << 'EOFJSON'
+{
+  "auth": {
+    "provider": "vertexai",
+    "projectId": "agent-sandbox-476202",
+    "location": "global"
+  },
+  "mcpServers": {
+    "sandbox": {
+      "httpUrl": "http://localhost:8080/mcp",
+      "args": []
+    }
+  }
+}
+EOFJSON
+chown -R 1000:1000 /home/gem/.gemini
+chmod 755 /home/gem/.gemini
+chmod 644 /home/gem/.gemini/settings.json`
+              ],
+              volumeMounts: [
+                {
+                  name: 'gem-home',
+                  mountPath: '/home/gem',
+                },
+              ],
+            },
+          ],
           containers: [
             {
               name: 'sandbox-runtime',
@@ -304,6 +337,10 @@ app.post('/api/sandboxes', async (req: Request, res: Response) => {
                   name: 'gcs-storage',
                   mountPath: '/sandbox',
                 },
+                {
+                  name: 'gem-home',
+                  mountPath: '/home/gem',
+                },
               ],
             },
           ],
@@ -317,6 +354,10 @@ app.post('/api/sandboxes', async (req: Request, res: Response) => {
                   mountOptions: `only-dir=${name},file-mode=0666,dir-mode=0777,implicit-dirs`,
                 },
               },
+            },
+            {
+              name: 'gem-home',
+              emptyDir: {},
             },
           ],
         },
@@ -583,7 +624,7 @@ app.all('/:username/:sandboxname/*', async (req: Request, res: Response) => {
 });
 
 // Catch-all for invalid routes
-app.use((req: Request, res: Response) => {
+app.use((_req: Request, res: Response) => {
   res.status(400).json({
     error: 'Invalid path',
     message: 'Expected format: /{username}/{sandboxname}/{endpoint}',
@@ -592,7 +633,7 @@ app.use((req: Request, res: Response) => {
 });
 
 // Error handler
-app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error('Error:', err);
   res.status(500).json({
     error: 'Internal server error',
