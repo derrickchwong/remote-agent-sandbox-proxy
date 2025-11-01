@@ -107,12 +107,14 @@ Returns proxy status and number of discovered sandboxes.
 }
 ```
 
-### List Sandboxes
+### Management API
+
+#### List All Sandboxes
 ```
-GET /sandboxes
+GET /api/sandboxes
 ```
 
-Returns all discovered sandboxes.
+Returns all sandboxes with detailed information.
 
 **Response:**
 ```json
@@ -120,22 +122,98 @@ Returns all discovered sandboxes.
   "count": 2,
   "sandboxes": [
     {
-      "path": "alice/my-sandbox",
+      "name": "my-sandbox",
+      "namespace": "default",
+      "username": "alice",
+      "serviceFQDN": "sandbox-my-sandbox.default.svc.cluster.local",
       "service": "sandbox-my-sandbox",
-      "namespace": "default",
-      "ready": true
-    },
-    {
-      "path": "bob/test-env",
-      "service": "sandbox-test-env",
-      "namespace": "default",
-      "ready": true
+      "ready": true,
+      "createdAt": "2025-10-31T10:00:00Z"
     }
   ]
 }
 ```
 
-### Proxy to Sandbox
+#### Get Sandbox Status
+```
+GET /api/sandboxes/:username/:name
+```
+
+Returns detailed status for a specific sandbox.
+
+**Response:**
+```json
+{
+  "name": "my-sandbox",
+  "namespace": "default",
+  "username": "alice",
+  "serviceFQDN": "sandbox-my-sandbox.default.svc.cluster.local",
+  "service": "sandbox-my-sandbox",
+  "replicas": 1,
+  "ready": true,
+  "readyReason": "SandboxReady",
+  "readyMessage": "Sandbox is running",
+  "podName": "my-sandbox-abc123",
+  "podStatus": "Running",
+  "createdAt": "2025-10-31T10:00:00Z"
+}
+```
+
+#### Create Sandbox
+```
+POST /api/sandboxes
+```
+
+Creates a new sandbox.
+
+**Request Body:**
+```json
+{
+  "name": "my-sandbox",
+  "username": "alice",
+  "image": "us-central1-docker.pkg.dev/project/repo/sandbox-runtime:latest",
+  "namespace": "default"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Sandbox 'my-sandbox' created successfully",
+  "sandbox": {
+    "name": "my-sandbox",
+    "namespace": "default",
+    "username": "alice"
+  }
+}
+```
+
+#### Delete Sandbox
+```
+DELETE /api/sandboxes/:username/:name?namespace=default
+```
+
+Deletes a sandbox.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Sandbox 'my-sandbox' deleted successfully"
+}
+```
+
+### Legacy Endpoints
+
+#### List Sandboxes (Legacy)
+```
+GET /sandboxes
+```
+
+Returns discovered sandboxes in cache (for backward compatibility).
+
+#### Proxy to Sandbox
 ```
 {METHOD} /{username}/{sandboxname}/{endpoint}
 ```
@@ -144,17 +222,20 @@ Forwards the request to the sandbox's internal service.
 
 **Example - Execute Command:**
 ```bash
-curl -X POST http://EXTERNAL-IP/alice/my-sandbox/execute \
+curl -X POST http://EXTERNAL-IP/alice/my-sandbox/v1/shell/exec \
   -H "Content-Type: application/json" \
-  -d '{"command": "python script.py"}'
+  -d '{"command": "ls -la"}'
 ```
 
 **Response:**
 ```json
 {
-  "stdout": "Hello from sandbox",
-  "stderr": "",
-  "exit_code": 0
+  "success": true,
+  "data": {
+    "output": "total 24\ndrwxr-xr-x  ...",
+    "exit_code": 0,
+    "session_id": "abc123"
+  }
 }
 ```
 

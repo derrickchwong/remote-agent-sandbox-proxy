@@ -12,7 +12,7 @@ metadata:
 rules:
 - apiGroups: ["agents.x-k8s.io"]
   resources: ["sandboxes"]
-  verbs: ["get", "list", "watch"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 - apiGroups: [""]
   resources: ["services", "pods"]
   verbs: ["get", "list"]
