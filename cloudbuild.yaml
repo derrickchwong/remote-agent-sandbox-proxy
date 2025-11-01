@@ -1,0 +1,26 @@
+steps:
+  # Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/agent-sandbox-476202/agent-sandbox/sandbox-proxy:latest'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/agent-sandbox-476202/agent-sandbox/sandbox-proxy:$BUILD_ID'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/agent-sandbox-476202/agent-sandbox/sandbox-proxy:$SHORT_SHA'
+      - '.'
+
+# Push all tags to Artifact Registry
+images:
+  - 'us-central1-docker.pkg.dev/agent-sandbox-476202/agent-sandbox/sandbox-proxy:latest'
+  - 'us-central1-docker.pkg.dev/agent-sandbox-476202/agent-sandbox/sandbox-proxy:$BUILD_ID'
+  - 'us-central1-docker.pkg.dev/agent-sandbox-476202/agent-sandbox/sandbox-proxy:$SHORT_SHA'
+
+# Optional: Set build timeout (default is 10 minutes)
+timeout: 600s
+
+# Optional: Specify options
+options:
+  machineType: 'N1_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY

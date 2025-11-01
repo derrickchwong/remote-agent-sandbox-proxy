@@ -342,6 +342,131 @@ app.delete('/api/sandboxes/:username/:name', async (req: Request, res: Response)
   }
 });
 
+// API: Pause a sandbox (set replicas to 0)
+app.post('/api/sandboxes/:username/:name/pause', async (req: Request, res: Response) => {
+  const { username, name } = req.params;
+  const namespace = req.query.namespace as string || 'default';
+
+  try {
+    // Get current sandbox
+    const response = await k8sApi.getNamespacedCustomObject(
+      'agents.x-k8s.io',
+      'v1alpha1',
+      namespace,
+      'sandboxes',
+      name
+    );
+
+    const sandbox = response.body as any;
+
+    // Update spec to set replicas to 0
+    const updatedSandbox = {
+      ...sandbox,
+      spec: {
+        ...sandbox.spec,
+        replicas: 0,
+      },
+    };
+
+    await k8sApi.replaceNamespacedCustomObject(
+      'agents.x-k8s.io',
+      'v1alpha1',
+      namespace,
+      'sandboxes',
+      name,
+      updatedSandbox
+    );
+
+    // Update cache
+    const key = `${username}/${name}`;
+    const cachedInfo = sandboxCache.get(key);
+    if (cachedInfo) {
+      cachedInfo.ready = false;
+      sandboxCache.set(key, cachedInfo);
+    }
+
+    res.json({
+      success: true,
+      message: `Sandbox '${name}' paused successfully`,
+      replicas: 0,
+    });
+  } catch (error: any) {
+    console.error(`Error pausing sandbox ${username}/${name}:`, error);
+    if (error.statusCode === 404) {
+      res.status(404).json({
+        error: 'Sandbox not found',
+        username,
+        name,
+      });
+    } else {
+      res.status(500).json({
+        error: 'Failed to pause sandbox',
+        message: error.body?.message || error.message,
+      });
+    }
+  }
+});
+
+// API: Resume a sandbox (set replicas to 1)
+app.post('/api/sandboxes/:username/:name/resume', async (req: Request, res: Response) => {
+  const { username, name } = req.params;
+  const namespace = req.query.namespace as string || 'default';
+
+  try {
+    // Get current sandbox
+    const response = await k8sApi.getNamespacedCustomObject(
+      'agents.x-k8s.io',
+      'v1alpha1',
+      namespace,
+      'sandboxes',
+      name
+    );
+
+    const sandbox = response.body as any;
+
+    // Update spec to set replicas to 1
+    const updatedSandbox = {
+      ...sandbox,
+      spec: {
+        ...sandbox.spec,
+        replicas: 1,
+      },
+    };
+
+    await k8sApi.replaceNamespacedCustomObject(
+      'agents.x-k8s.io',
+      'v1alpha1',
+      namespace,
+      'sandboxes',
+      name,
+      updatedSandbox
+    );
+
+    // Trigger discovery to update cache
+    await discoverSandboxes();
+
+    res.json({
+      success: true,
+      message: `Sandbox '${name}' resumed successfully`,
+      replicas: 1,
+    });
+  } catch (error: any) {
+    console.error(`Error resuming sandbox ${username}/${name}:`, error);
+    if (error.statusCode === 404) {
+      res.status(404).json({
+        error: 'Sandbox not found',
+        username,
+        name,
+      });
+    } else {
+      res.status(500).json({
+        error: 'Failed to resume sandbox',
+        message: error.body?.message || error.message,
+      });
+    }
+  }
+});
+
 // Proxy requests to sandboxes
 // Route: /{username}/{sandboxname}/*
 app.all('/:username/:sandboxname/*', async (req: Request, res: Response) => {
