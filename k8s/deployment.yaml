@@ -7,7 +7,7 @@ metadata:
   labels:
     app: sandbox-proxy
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: sandbox-proxy
@@ -26,6 +26,10 @@ spec:
         env:
         - name: PORT
           value: "8080"
+        - name: GCS_BUCKET_NAME
+          value: "agent-sandbox-storage"
+        - name: GCS_SERVICE_ACCOUNT
+          value: "sandbox-gcs-sa@agent-sandbox-476202.iam.gserviceaccount.com"
         livenessProbe:
           httpGet:
             path: /health

@@ -4,6 +4,8 @@ kind: ServiceAccount
 metadata:
   name: sandbox-proxy
   namespace: default
+  annotations:
+    iam.gke.io/gcp-service-account: sandbox-proxy-sa@agent-sandbox-476202.iam.gserviceaccount.com
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

@@ -1,8 +1,11 @@
 import express, { Request, Response, NextFunction } from 'express';
 import * as k8s from '@kubernetes/client-node';
+import { Storage } from '@google-cloud/storage';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
+const GCS_BUCKET_NAME = process.env.GCS_BUCKET_NAME || 'agent-sandbox-storage';
+const GCS_SERVICE_ACCOUNT = process.env.GCS_SERVICE_ACCOUNT || 'sandbox-gcs-sa@agent-sandbox-476202.iam.gserviceaccount.com';
 
 // Middleware to parse JSON
 app.use(express.json());
@@ -13,6 +16,9 @@ kc.loadFromDefault();
 
 const k8sApi = kc.makeApiClient(k8s.CustomObjectsApi);
 const coreApi = kc.makeApiClient(k8s.CoreV1Api);
+
+// Google Cloud Storage client setup
+const storage = new Storage();
 
 // Cache for sandbox to service mapping
 interface SandboxInfo {
@@ -69,6 +75,31 @@ async function discoverSandboxes(): Promise<void> {
 // Refresh sandbox cache periodically
 setInterval(discoverSandboxes, 30000); // Every 30 seconds
 discoverSandboxes(); // Initial discovery
+
+// Create a folder in GCS bucket for sandbox storage
+async function createGCSFolder(folderName: string): Promise<void> {
+  try {
+    const bucket = storage.bucket(GCS_BUCKET_NAME);
+    const file = bucket.file(`${folderName}/`);
+
+    // Check if folder already exists
+    const [exists] = await file.exists();
+    if (!exists) {
+      // Create an empty file to represent the folder
+      await file.save('', {
+        metadata: {
+          contentType: 'application/x-directory',
+        },
+      });
+      console.log(`Created GCS folder: gs://${GCS_BUCKET_NAME}/${folderName}/`);
+    } else {
+      console.log(`GCS folder already exists: gs://${GCS_BUCKET_NAME}/${folderName}/`);
+    }
+  } catch (error) {
+    console.error(`Error creating GCS folder ${folderName}:`, error);
+    throw error;
+  }
+}
 
 // Health check endpoint
 app.get('/health', (req: Request, res: Response) => {
@@ -236,8 +267,12 @@ app.post('/api/sandboxes', async (req: Request, res: Response) => {
             sandbox: name,
             'managed-by': 'sandbox-proxy',
           },
+          annotations: {
+            'gke-gcsfuse/volumes': 'true',
+          },
         },
         spec: {
+          serviceAccountName: 'sandbox-gcs-ksa',
           containers: [
             {
               name: 'sandbox-runtime',
@@ -264,6 +299,24 @@ app.post('/api/sandboxes', async (req: Request, res: Response) => {
                 { name: 'GOOGLE_CLOUD_PROJECT', value: 'agent-sandbox-476202' },
                 { name: 'GOOGLE_CLOUD_LOCATION', value: 'global' },
               ],
+              volumeMounts: [
+                {
+                  name: 'gcs-storage',
+                  mountPath: '/sandbox',
+                },
+              ],
+            },
+          ],
+          volumes: [
+            {
+              name: 'gcs-storage',
+              csi: {
+                driver: 'gcsfuse.csi.storage.gke.io',
+                volumeAttributes: {
+                  bucketName: GCS_BUCKET_NAME,
+                  mountOptions: `only-dir=${name},file-mode=0666,dir-mode=0777,implicit-dirs`,
+                },
+              },
             },
           ],
         },
@@ -272,6 +325,9 @@ app.post('/api/sandboxes', async (req: Request, res: Response) => {
   };
 
   try {
+    // Create GCS folder for sandbox storage before creating the Kubernetes resource
+    await createGCSFolder(name);
+
     const response = await k8sApi.createNamespacedCustomObject(
       'agents.x-k8s.io',
       'v1alpha1',
