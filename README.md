@@ -282,56 +282,6 @@ gcloud builds submit --substitutions=_OVERLAY=prod,...
 
 ---
 
-## Local Development
-
-### Run Locally
-
-```bash
-# Install dependencies
-npm install
-
-# Build
-npm run build
-
-# Set environment variables
-export GOOGLE_CLOUD_PROJECT=my-project
-export GCS_BUCKET_NAME=my-bucket
-export GCS_SERVICE_ACCOUNT=my-sa@my-project.iam.gserviceaccount.com
-export DEFAULT_SANDBOX_IMAGE=my-image:latest
-
-# Run
-npm start
-```
-
-### Deploy Manually with kubectl
-
-If you need to deploy without Cloud Build:
-
-```bash
-# 1. Create overlay from template
-mkdir -p k8s/overlays/dev
-cp k8s/overlays/kustomization.yaml.template k8s/overlays/dev/kustomization.yaml
-
-# 2. Edit with your values
-nano k8s/overlays/dev/kustomization.yaml
-
-# 3. Build and push image manually
-docker build -t us-central1-docker.pkg.dev/my-project/my-repo/sandbox-proxy:latest .
-docker push us-central1-docker.pkg.dev/my-project/my-repo/sandbox-proxy:latest
-
-# 4. Deploy
-kubectl apply -k k8s/overlays/dev/
-```
-
-### Port Forward for Testing
-
-```bash
-kubectl port-forward service/sandbox-proxy 8080:80
-# Access at http://localhost:8080
-```
-
----
-
 ## Updating the Deployment
 
 To update code or configuration:
