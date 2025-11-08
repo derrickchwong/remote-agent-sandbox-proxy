@@ -1,20 +1,146 @@
+# Cloud Build configuration with automatic deployment
+# Builds Docker image and deploys to GKE using Kustomize
+#
+# Usage:
+#   gcloud builds submit \
+#     --substitutions=\
+# _REGION=us-central1,\
+# _REPO_NAME=my-repo,\
+# _IMAGE_TAG=latest,\
+# _GKE_CLUSTER=my-cluster,\
+# _GKE_LOCATION=us-central1,\
+# _OVERLAY=dev,\
+# _GCS_BUCKET_NAME=my-bucket,\
+# _GCS_SERVICE_ACCOUNT=gcs-sa@project.iam.gserviceaccount.com,\
+# _DEFAULT_SANDBOX_IMAGE=my-registry/sandbox-runtime:latest,\
+# _PROXY_SA=proxy-sa@project.iam.gserviceaccount.com,\
+# _GCS_SA=gcs-sa@project.iam.gserviceaccount.com
+#
+# Prerequisites:
+#   1. Create Artifact Registry repository:
+#      gcloud artifacts repositories create REPO_NAME \
+#        --repository-format=docker \
+#        --location=REGION
+#
+#   2. Grant Cloud Build SA permissions:
+#      gcloud projects add-iam-policy-binding PROJECT_ID \
+#        --member=serviceAccount:PROJECT_NUMBER@cloudbuild.gserviceaccount.com \
+#        --role=roles/container.developer
+#
+# Note: The kustomization overlay is generated dynamically during build,
+#       so you don't need to create k8s/overlays/dev/ manually.
+
 steps:
-  # Build the Docker image
+  # Step 1: Build the Docker image
   - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-image'
     args:
       - 'build'
       - '-t'
-      - 'us-central1-docker.pkg.dev/agent-sandbox-476202/agent-sandbox/sandbox-proxy:latest'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO_NAME}/sandbox-proxy:${_IMAGE_TAG}'
       - '.'
+
+  # Step 2: Push the image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-image'
+    args:
+      - 'push'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO_NAME}/sandbox-proxy:${_IMAGE_TAG}'
+
+  # Step 3: Generate kustomization overlay (since it's gitignored)
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: 'generate-kustomization'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        mkdir -p k8s/overlays/${_OVERLAY}
+        cat > k8s/overlays/${_OVERLAY}/kustomization.yaml <<EOF
+        apiVersion: kustomize.config.k8s.io/v1beta1
+        kind: Kustomization
+
+        resources:
+          - ../../base
+
+        configMapGenerator:
+          - name: sandbox-proxy-config
+            literals:
+              - GOOGLE_CLOUD_PROJECT=${PROJECT_ID}
+              - GCS_BUCKET_NAME=${_GCS_BUCKET_NAME}
+              - GCS_SERVICE_ACCOUNT=${_GCS_SERVICE_ACCOUNT}
+              - DEFAULT_SANDBOX_IMAGE=${_DEFAULT_SANDBOX_IMAGE}
+              - PORT=8080
+
+        images:
+          - name: us-docker.pkg.dev/cloudrun/container/hello
+            newName: ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO_NAME}/sandbox-proxy
+            newTag: ${_IMAGE_TAG}
+
+        patches:
+          - patch: |-
+              apiVersion: v1
+              kind: ServiceAccount
+              metadata:
+                name: sandbox-proxy
+                annotations:
+                  iam.gke.io/gcp-service-account: ${_PROXY_SA}
+          - patch: |-
+              apiVersion: v1
+              kind: ServiceAccount
+              metadata:
+                name: sandbox-gcs-ksa
+                annotations:
+                  iam.gke.io/gcp-service-account: ${_GCS_SA}
+        EOF
+        echo "Generated kustomization.yaml:"
+        cat k8s/overlays/${_OVERLAY}/kustomization.yaml
+
+  # Step 4: Deploy to GKE using kubectl + kustomize
+  - name: 'gcr.io/cloud-builders/kubectl'
+    id: 'deploy-to-gke'
+    args:
+      - 'apply'
+      - '-k'
+      - 'k8s/overlays/${_OVERLAY}/'
+    env:
+      - 'CLOUDSDK_COMPUTE_REGION=${_GKE_LOCATION}'
+      - 'CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER}'
+
+  # Step 5: Verify deployment
+  - name: 'gcr.io/cloud-builders/kubectl'
+    id: 'verify-deployment'
+    args:
+      - 'rollout'
+      - 'status'
+      - 'deployment/sandbox-proxy'
+      - '--timeout=5m'
+    env:
+      - 'CLOUDSDK_COMPUTE_REGION=${_GKE_LOCATION}'
+      - 'CLOUDSDK_CONTAINER_CLUSTER=${_GKE_CLUSTER}'
 
 # Push all tags to Artifact Registry
 images:
-  - 'us-central1-docker.pkg.dev/agent-sandbox-476202/agent-sandbox/sandbox-proxy:latest'
+  - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO_NAME}/sandbox-proxy:${_IMAGE_TAG}'
 
-# Optional: Set build timeout (default is 10 minutes)
+# Substitutions - all required, pass via --substitutions flag
+# No defaults provided - this repo is open source
+substitutions:
+  _REGION: ''                    # Artifact Registry region (e.g., us-central1, europe-west1)
+  _REPO_NAME: ''                 # Artifact Registry repository name
+  _IMAGE_TAG: ''                 # Image tag (e.g., latest, v1.0.0, main-abc123)
+  _GKE_CLUSTER: ''               # GKE cluster name
+  _GKE_LOCATION: ''              # GKE cluster location/region
+  _OVERLAY: ''                   # Kustomize overlay to use (dev/staging/prod)
+  _GCS_BUCKET_NAME: ''           # GCS bucket for sandbox storage
+  _GCS_SERVICE_ACCOUNT: ''       # Service account for GCS (e.g., sa-name@project.iam.gserviceaccount.com)
+  _DEFAULT_SANDBOX_IMAGE: ''     # Default sandbox runtime image
+  _PROXY_SA: ''                  # Proxy service account (e.g., proxy-sa@project.iam.gserviceaccount.com)
+  _GCS_SA: ''                    # GCS service account (e.g., gcs-sa@project.iam.gserviceaccount.com)
+
+# Build timeout
 timeout: 600s
 
-# Optional: Specify options
+# Build options
 options:
   machineType: 'N1_HIGHCPU_8'
   logging: CLOUD_LOGGING_ONLY

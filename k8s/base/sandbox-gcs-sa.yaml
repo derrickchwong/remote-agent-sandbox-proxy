@@ -1,0 +1,10 @@
+# ServiceAccount for GCS access with Workload Identity
+# To customize: copy to sandbox-gcs-sa-user.yaml and update the annotation
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sandbox-gcs-ksa
+  namespace: default
+  # annotations:
+  #   iam.gke.io/gcp-service-account: your-gcs-sa@your-project.iam.gserviceaccount.com

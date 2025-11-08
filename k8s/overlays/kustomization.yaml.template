@@ -1,0 +1,43 @@
+# Copy this file to k8s/overlays/dev/kustomization.yaml (or your environment name)
+# Update the values below with your project-specific configuration
+# The overlays directory is gitignored
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Reference the base configuration
+resources:
+  - ../../base
+
+# Your ConfigMap with project-specific values
+configMapGenerator:
+  - name: sandbox-proxy-config
+    literals:
+      - GOOGLE_CLOUD_PROJECT=your-gcp-project-id
+      - GCS_BUCKET_NAME=your-gcs-bucket-name
+      - GCS_SERVICE_ACCOUNT=your-service-account@your-project.iam.gserviceaccount.com
+      - DEFAULT_SANDBOX_IMAGE=your-registry/your-project/sandbox-runtime:latest
+      - PORT=8080
+
+# Update the deployment image
+images:
+  - name: us-docker.pkg.dev/cloudrun/container/hello
+    newName: your-registry/your-project/sandbox-proxy
+    newTag: latest
+
+# Add Workload Identity annotations to ServiceAccounts
+patches:
+  - patch: |-
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: sandbox-proxy
+        annotations:
+          iam.gke.io/gcp-service-account: your-proxy-sa@your-project.iam.gserviceaccount.com
+  - patch: |-
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: sandbox-gcs-ksa
+        annotations:
+          iam.gke.io/gcp-service-account: your-gcs-sa@your-project.iam.gserviceaccount.com

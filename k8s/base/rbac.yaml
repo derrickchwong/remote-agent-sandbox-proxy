@@ -1,11 +1,13 @@
+# ServiceAccount with Workload Identity annotation
+# To customize: copy to rbac-user.yaml and update the annotation with your service account
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: sandbox-proxy
   namespace: default
-  annotations:
-    iam.gke.io/gcp-service-account: sandbox-proxy-sa@agent-sandbox-476202.iam.gserviceaccount.com
+  # annotations:
+  #   iam.gke.io/gcp-service-account: your-service-account@your-project.iam.gserviceaccount.com
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

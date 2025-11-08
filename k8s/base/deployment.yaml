@@ -19,17 +19,14 @@ spec:
       serviceAccountName: sandbox-proxy
       containers:
       - name: proxy
-        image: us-central1-docker.pkg.dev/agent-sandbox-476202/agent-sandbox/sandbox-proxy:latest
+        # Update this image reference to your registry or use: kubectl set image deployment/sandbox-proxy proxy=<your-image>
+        image: us-docker.pkg.dev/cloudrun/container/hello
         ports:
         - containerPort: 8080
           name: http
-        env:
-        - name: PORT
-          value: "8080"
-        - name: GCS_BUCKET_NAME
-          value: "agent-sandbox-storage"
-        - name: GCS_SERVICE_ACCOUNT
-          value: "sandbox-gcs-sa@agent-sandbox-476202.iam.gserviceaccount.com"
+        envFrom:
+        - configMapRef:
+            name: sandbox-proxy-config
         livenessProbe:
           httpGet:
             path: /health

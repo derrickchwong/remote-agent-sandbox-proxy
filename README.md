@@ -2,6 +2,24 @@
 
 An HTTP proxy service for routing requests to agent sandboxes running in Kubernetes. This proxy enables external clients to interact with sandboxes through a simple path-based routing system.
 
+> **⚠️ PROTOTYPE DISCLAIMER**
+>
+> This proxy is a **prototype** and is **NOT production-ready**. It lacks critical security features required for production use:
+> - ❌ **No authentication** - Anyone with network access can use the proxy
+> - ❌ **No authorization** - No access control or user permissions
+> - ❌ **No rate limiting** - Vulnerable to abuse and DoS attacks
+> - ❌ **No request validation** - Limited input sanitization
+>
+> **Do not expose this proxy to the public internet without implementing proper security measures.**
+>
+> For production use, you must implement:
+> - Authentication (API keys, OAuth, JWT, mutual TLS)
+> - Authorization and access control
+> - Rate limiting and quotas
+> - Request validation and sanitization
+> - Audit logging
+> - Network policies
+
 ## Architecture
 
 ```
@@ -19,6 +37,8 @@ Sandbox Pods (internal services)
 - **Path-based routing**: Route requests to sandboxes via `/{username}/{sandboxname}/{endpoint}`
 - **Automatic discovery**: Watches Kubernetes for Sandbox resources and updates routing table
 - **Public LoadBalancer**: Accessible from anywhere without port-forwarding
+- **Sandbox management API**: Create, delete, pause, resume sandboxes
+- **GCS persistence**: Sandboxes backed by Google Cloud Storage for persistent data
 - **Health checks**: Built-in health and status endpoints
 - **Lightweight**: Minimal resource footprint
 - **Scalable**: Can run multiple replicas for high availability
@@ -27,67 +47,139 @@ Sandbox Pods (internal services)
 
 - GKE cluster with [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) installed
 - `kubectl` configured for your cluster
-- Docker for building the image
-- GCR (Google Container Registry) access or another container registry
+- GCP project with Artifact Registry repository
+- Cloud Build API enabled
+- GCS bucket for sandbox storage
+
+---
 
 ## Quick Start
 
-### 1. Build the Docker Image
+Deploy using **Cloud Build** - one command builds the image and deploys to your GKE cluster.
+
+### 1. Setup GCS Storage
+
+Create the GCS bucket and service accounts:
 
 ```bash
-# Set your GCP project ID
-export PROJECT_ID=your-gcp-project-id
+export PROJECT_ID="my-project-id"
+export BUCKET_NAME="my-sandbox-storage-bucket"
+export GCP_SA_NAME="sandbox-gcs-sa"
 
-# Build the image
-docker build -t gcr.io/${PROJECT_ID}/sandbox-proxy:latest .
-
-# Push to GCR
-docker push gcr.io/${PROJECT_ID}/sandbox-proxy:latest
+./setup-gcs-storage.sh
 ```
 
-### 2. Update Kubernetes Manifests
-
-Edit `k8s/deployment.yaml` and replace `YOUR_PROJECT_ID` with your actual GCP project ID:
-
-```yaml
-image: gcr.io/your-gcp-project-id/sandbox-proxy:latest
-```
-
-### 3. Deploy to Kubernetes
+### 2. Create Artifact Registry Repository
 
 ```bash
-# Apply RBAC (ServiceAccount, ClusterRole, ClusterRoleBinding)
-kubectl apply -f k8s/rbac.yaml
-
-# Deploy the proxy
-kubectl apply -f k8s/deployment.yaml
+gcloud artifacts repositories create my-repo \
+  --repository-format=docker \
+  --location=us-central1
 ```
 
-### 4. Get the LoadBalancer IP
+### 3. Grant Cloud Build Permissions
+
+```bash
+# Get your project number
+PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
+
+# Grant Cloud Build permission to deploy to GKE
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member=serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com \
+  --role=roles/container.developer
+```
+
+### 4. Build and Deploy
+
+Run Cloud Build with your configuration:
+
+```bash
+gcloud builds submit \
+  --substitutions=\
+_REGION=us-central1,\
+_REPO_NAME=my-repo,\
+_IMAGE_TAG=latest,\
+_GKE_CLUSTER=my-cluster,\
+_GKE_LOCATION=us-central1,\
+_OVERLAY=dev,\
+_GCS_BUCKET_NAME=my-sandbox-storage-bucket,\
+_GCS_SERVICE_ACCOUNT=sandbox-gcs-sa@my-project.iam.gserviceaccount.com,\
+_DEFAULT_SANDBOX_IMAGE=us-central1-docker.pkg.dev/my-project/my-repo/sandbox-runtime:latest,\
+_PROXY_SA=sandbox-proxy-sa@my-project.iam.gserviceaccount.com,\
+_GCS_SA=sandbox-gcs-sa@my-project.iam.gserviceaccount.com
+```
+
+**That's it!** Cloud Build will:
+1. ✅ Build the Docker image
+2. ✅ Push to Artifact Registry
+3. ✅ Generate Kustomize configuration
+4. ✅ Deploy to GKE
+5. ✅ Verify deployment succeeded
+
+### 5. Get the LoadBalancer IP
 
 ```bash
 kubectl get service sandbox-proxy
 
 # Wait for EXTERNAL-IP to be assigned
-# Output:
 # NAME            TYPE           CLUSTER-IP      EXTERNAL-IP      PORT(S)        AGE
 # sandbox-proxy   LoadBalancer   10.100.200.50   35.123.45.67     80:32000/TCP   2m
 ```
 
-### 5. Test the Proxy
+### 6. Test the Proxy
 
 ```bash
 # Health check
 curl http://EXTERNAL-IP/health
 
-# List available sandboxes
-curl http://EXTERNAL-IP/sandboxes
-
-# Execute command in a sandbox
-curl -X POST http://EXTERNAL-IP/alice/my-sandbox/execute \
-  -H "Content-Type: application/json" \
-  -d '{"command": "ls -la"}'
+# List sandboxes
+curl http://EXTERNAL-IP/api/sandboxes
 ```
+
+---
+
+## Configuration Parameters
+
+All configuration is passed via Cloud Build substitutions:
+
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `_REGION` | Artifact Registry region | `us-central1` |
+| `_REPO_NAME` | Artifact Registry repository | `my-repo` |
+| `_IMAGE_TAG` | Image tag | `latest` or `v1.0.0` |
+| `_GKE_CLUSTER` | GKE cluster name | `my-cluster` |
+| `_GKE_LOCATION` | GKE cluster region | `us-central1` |
+| `_OVERLAY` | Environment name | `dev`, `staging`, or `prod` |
+| `_GCS_BUCKET_NAME` | GCS bucket for storage | `my-sandbox-storage` |
+| `_GCS_SERVICE_ACCOUNT` | Service account for GCS | `gcs-sa@project.iam.gserviceaccount.com` |
+| `_DEFAULT_SANDBOX_IMAGE` | Default sandbox image | `registry/sandbox-runtime:latest` |
+| `_PROXY_SA` | Proxy service account | `proxy-sa@project.iam.gserviceaccount.com` |
+| `_GCS_SA` | GCS service account | `gcs-sa@project.iam.gserviceaccount.com` |
+
+---
+
+## File Structure
+
+```
+remote-agent-sandbox-proxy/
+├── src/
+│   └── server.ts                      # Proxy server code
+├── k8s/
+│   ├── base/                          # Base Kubernetes resources
+│   │   ├── deployment.yaml            # Deployment + Service
+│   │   ├── rbac.yaml                  # RBAC configuration
+│   │   ├── sandbox-gcs-sa.yaml        # GCS ServiceAccount
+│   │   └── kustomization.yaml         # Kustomize base
+│   └── overlays/
+│       └── kustomization.yaml.template  # Template (for reference)
+├── cloudbuild.yaml                    # Cloud Build CI/CD pipeline
+├── setup-gcs-storage.sh               # GCS setup script
+└── README.md                          # This file
+```
+
+**Note:** The `k8s/overlays/` directory is gitignored. Cloud Build generates the overlay dynamically during deployment.
+
+---
 
 ## API Endpoints
 
@@ -116,57 +208,19 @@ GET /api/sandboxes
 
 Returns all sandboxes with detailed information.
 
-**Response:**
-```json
-{
-  "count": 2,
-  "sandboxes": [
-    {
-      "name": "my-sandbox",
-      "namespace": "default",
-      "username": "alice",
-      "serviceFQDN": "sandbox-my-sandbox.default.svc.cluster.local",
-      "service": "sandbox-my-sandbox",
-      "ready": true,
-      "createdAt": "2025-10-31T10:00:00Z"
-    }
-  ]
-}
-```
-
 #### Get Sandbox Status
 ```
 GET /api/sandboxes/:username/:name
 ```
 
-Returns detailed status for a specific sandbox.
-
-**Response:**
-```json
-{
-  "name": "my-sandbox",
-  "namespace": "default",
-  "username": "alice",
-  "serviceFQDN": "sandbox-my-sandbox.default.svc.cluster.local",
-  "service": "sandbox-my-sandbox",
-  "replicas": 1,
-  "ready": true,
-  "readyReason": "SandboxReady",
-  "readyMessage": "Sandbox is running",
-  "podName": "my-sandbox-abc123",
-  "podStatus": "Running",
-  "createdAt": "2025-10-31T10:00:00Z"
-}
-```
+Returns status for a specific sandbox.
 
 #### Create Sandbox
 ```
 POST /api/sandboxes
 ```
 
-Creates a new sandbox.
-
-**Request Body:**
+**Request:**
 ```json
 {
   "name": "my-sandbox",
@@ -176,104 +230,61 @@ Creates a new sandbox.
 }
 ```
 
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Sandbox 'my-sandbox' created successfully",
-  "sandbox": {
-    "name": "my-sandbox",
-    "namespace": "default",
-    "username": "alice"
-  }
-}
-```
-
 #### Delete Sandbox
 ```
 DELETE /api/sandboxes/:username/:name?namespace=default
 ```
 
-Deletes a sandbox.
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Sandbox 'my-sandbox' deleted successfully"
-}
+#### Pause Sandbox
+```
+POST /api/sandboxes/:username/:name/pause
 ```
 
-### Legacy Endpoints
+Sets sandbox replicas to 0, stopping the pod but preserving configuration.
 
-#### List Sandboxes (Legacy)
+#### Resume Sandbox
 ```
-GET /sandboxes
+POST /api/sandboxes/:username/:name/resume
 ```
 
-Returns discovered sandboxes in cache (for backward compatibility).
+Sets sandbox replicas to 1, restarting the pod.
 
-#### Proxy to Sandbox
+### Proxy to Sandbox
 ```
 {METHOD} /{username}/{sandboxname}/{endpoint}
 ```
 
 Forwards the request to the sandbox's internal service.
 
-**Example - Execute Command:**
+**Example:**
 ```bash
 curl -X POST http://EXTERNAL-IP/alice/my-sandbox/v1/shell/exec \
   -H "Content-Type: application/json" \
   -d '{"command": "ls -la"}'
 ```
 
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "output": "total 24\ndrwxr-xr-x  ...",
-    "exit_code": 0,
-    "session_id": "abc123"
-  }
-}
+---
+
+## Multi-Environment Deployment
+
+Deploy to different environments by changing the `_OVERLAY` parameter:
+
+```bash
+# Development
+gcloud builds submit --substitutions=_OVERLAY=dev,...
+
+# Staging
+gcloud builds submit --substitutions=_OVERLAY=staging,...
+
+# Production
+gcloud builds submit --substitutions=_OVERLAY=prod,...
 ```
 
-## Username Labeling
+---
 
-For the proxy to route by username, sandboxes must be labeled with a `user` label:
+## Local Development
 
-```yaml
-apiVersion: agents.x-k8s.io/v1alpha1
-kind: Sandbox
-metadata:
-  name: my-sandbox
-  labels:
-    user: alice  # Username for routing
-spec:
-  # ... rest of sandbox spec
-```
-
-If no `user` label is present, the sandbox is accessible via `default/{sandboxname}`.
-
-## Configuration
-
-### Environment Variables
-
-- `PORT`: HTTP port to listen on (default: 8080)
-
-### Customization
-
-Edit `src/server.ts` to customize:
-- Sandbox port (default: 8888)
-- Cache refresh interval (default: 30 seconds)
-- Add authentication/authorization
-- Add rate limiting
-- Add request logging
-
-## Development
-
-### Local Development
+### Run Locally
 
 ```bash
 # Install dependencies
@@ -282,31 +293,127 @@ npm install
 # Build
 npm run build
 
-# Run locally (requires kubeconfig)
+# Set environment variables
+export GOOGLE_CLOUD_PROJECT=my-project
+export GCS_BUCKET_NAME=my-bucket
+export GCS_SERVICE_ACCOUNT=my-sa@my-project.iam.gserviceaccount.com
+export DEFAULT_SANDBOX_IMAGE=my-image:latest
+
+# Run
 npm start
 ```
 
-### Testing with Port-Forward
+### Deploy Manually with kubectl
 
-If you want to test without a LoadBalancer:
+If you need to deploy without Cloud Build:
+
+```bash
+# 1. Create overlay from template
+mkdir -p k8s/overlays/dev
+cp k8s/overlays/kustomization.yaml.template k8s/overlays/dev/kustomization.yaml
+
+# 2. Edit with your values
+nano k8s/overlays/dev/kustomization.yaml
+
+# 3. Build and push image manually
+docker build -t us-central1-docker.pkg.dev/my-project/my-repo/sandbox-proxy:latest .
+docker push us-central1-docker.pkg.dev/my-project/my-repo/sandbox-proxy:latest
+
+# 4. Deploy
+kubectl apply -k k8s/overlays/dev/
+```
+
+### Port Forward for Testing
 
 ```bash
 kubectl port-forward service/sandbox-proxy 8080:80
-
-# Then access at http://localhost:8080
+# Access at http://localhost:8080
 ```
 
-## Deployment Strategies
+---
 
-### Single Region
-Deploy one proxy per cluster (default configuration).
+## Updating the Deployment
 
-### Multi-Region
-Deploy proxies in multiple GKE clusters and use a global load balancer to route traffic.
+To update code or configuration:
 
-### High Availability
-- Use `replicas: 2` or more in deployment.yaml (already configured)
-- Proxy is stateless, so all replicas can serve traffic
+```bash
+# Just run Cloud Build again
+gcloud builds submit --substitutions=...
+```
+
+Cloud Build will rebuild, push, and redeploy automatically.
+
+---
+
+## Troubleshooting
+
+### Cloud Build fails with permission error
+
+Grant Cloud Build permission to deploy:
+```bash
+PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member=serviceAccount:${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com \
+  --role=roles/container.developer
+```
+
+### Pod fails with "environment variable required" error
+
+Check Cloud Build substitutions are correct:
+```bash
+# View the generated ConfigMap
+kubectl get configmap -o yaml | grep sandbox-proxy-config
+```
+
+### Workload Identity issues
+
+Verify service account annotations:
+```bash
+kubectl get sa sandbox-proxy -o yaml
+kubectl get sa sandbox-gcs-ksa -o yaml
+```
+
+Check IAM bindings:
+```bash
+gcloud iam service-accounts get-iam-policy sandbox-gcs-sa@${PROJECT_ID}.iam.gserviceaccount.com
+```
+
+### Sandbox not discovered
+
+1. Check if sandbox exists: `kubectl get sandboxes`
+2. Check if sandbox is labeled with `user` label
+3. Check proxy logs: `kubectl logs -l app=sandbox-proxy`
+
+### LoadBalancer stuck in Pending
+
+Check GKE quota and ensure LoadBalancer services are enabled.
+
+---
+
+## Useful Commands
+
+```bash
+# Check deployment status
+kubectl get pods -l app=sandbox-proxy
+kubectl rollout status deployment/sandbox-proxy
+
+# View logs
+kubectl logs -f -l app=sandbox-proxy
+
+# Verify configuration
+kubectl get configmap -o yaml | grep sandbox-proxy-config
+kubectl get sa sandbox-proxy -o yaml
+kubectl get sa sandbox-gcs-ksa -o yaml
+
+# Get LoadBalancer IP
+kubectl get svc sandbox-proxy
+
+# Test endpoints
+curl http://EXTERNAL-IP/health
+curl http://EXTERNAL-IP/api/sandboxes
+```
+
+---
 
 ## Security Considerations
 
@@ -317,16 +424,19 @@ Deploy proxies in multiple GKE clusters and use a global load balancer to route 
 
 2. **Network Policies**: Restrict which pods can access sandboxes
 
-3. **RBAC**: The proxy has read-only access to Sandbox resources (already configured)
+3. **RBAC**: The proxy has appropriate ClusterRole permissions (configured)
 
-4. **Rate Limiting**: Add rate limiting to prevent abuse
+4. **Workload Identity**: GKE Workload Identity configured for secure GCP access
+
+5. **Rate Limiting**: Add rate limiting to prevent abuse
+
+---
 
 ## Monitoring
 
 ### Logs
 
 ```bash
-# View proxy logs
 kubectl logs -l app=sandbox-proxy -f
 ```
 
@@ -336,54 +446,9 @@ Consider adding Prometheus metrics:
 - Request count by sandbox
 - Request latency
 - Error rates
+- Sandbox discovery stats
 
-## Troubleshooting
-
-### Proxy not discovering sandboxes
-
-Check RBAC permissions:
-```bash
-kubectl get clusterrole sandbox-proxy-role
-kubectl get clusterrolebinding sandbox-proxy-binding
-```
-
-### LoadBalancer stuck in Pending
-
-Check GKE quota and ensure LoadBalancer services are enabled in your cluster.
-
-### 404 Sandbox not found
-
-1. Check if sandbox exists: `kubectl get sandboxes`
-2. Check if sandbox is labeled correctly with `user` label
-3. Check proxy logs for discovery errors
-
-### 503 Sandbox not ready
-
-Wait for the sandbox pod to become ready:
-```bash
-kubectl get pods -l sandbox=my-sandbox
-```
-
-## Updating the Proxy
-
-```bash
-# Build new image
-docker build -t gcr.io/${PROJECT_ID}/sandbox-proxy:v2 .
-docker push gcr.io/${PROJECT_ID}/sandbox-proxy:v2
-
-# Update deployment
-kubectl set image deployment/sandbox-proxy proxy=gcr.io/${PROJECT_ID}/sandbox-proxy:v2
-
-# Or edit deployment.yaml and re-apply
-kubectl apply -f k8s/deployment.yaml
-```
-
-## Cleaning Up
-
-```bash
-kubectl delete -f k8s/deployment.yaml
-kubectl delete -f k8s/rbac.yaml
-```
+---
 
 ## License
 

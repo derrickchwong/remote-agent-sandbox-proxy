@@ -11,12 +11,34 @@
 set -e
 
 # Configuration
-PROJECT_ID="${PROJECT_ID:-agent-sandbox-476202}"
+# Set these environment variables before running this script:
+# export PROJECT_ID="your-gcp-project-id"
+# export REGION="your-region"  # e.g., us-central1
+# export BUCKET_NAME="your-bucket-name"
+# export GCP_SA_NAME="your-gcp-service-account-name"  # e.g., sandbox-gcs-sa
+# export K8S_SA_NAME="your-k8s-service-account-name"  # e.g., sandbox-gcs-ksa
+# export NAMESPACE="your-namespace"  # e.g., default
+
+PROJECT_ID="${PROJECT_ID}"
 REGION="${REGION:-us-central1}"
-BUCKET_NAME="${BUCKET_NAME:-agent-sandbox-storage}"
-GCP_SA_NAME="${GCP_SA_NAME:-sandbox-gcs-sa}"
+BUCKET_NAME="${BUCKET_NAME}"
+GCP_SA_NAME="${GCP_SA_NAME}"
 K8S_SA_NAME="${K8S_SA_NAME:-sandbox-gcs-ksa}"
 NAMESPACE="${NAMESPACE:-default}"
+
+# Validate required variables
+if [ -z "$PROJECT_ID" ]; then
+    echo "Error: PROJECT_ID environment variable is required"
+    exit 1
+fi
+if [ -z "$BUCKET_NAME" ]; then
+    echo "Error: BUCKET_NAME environment variable is required"
+    exit 1
+fi
+if [ -z "$GCP_SA_NAME" ]; then
+    echo "Error: GCP_SA_NAME environment variable is required"
+    exit 1
+fi
 
 echo "=== GCS Storage Setup for Sandbox Persistence ==="
 echo "Project: $PROJECT_ID"

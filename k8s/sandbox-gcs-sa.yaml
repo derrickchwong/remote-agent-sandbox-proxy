@@ -1,8 +1,0 @@
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: sandbox-gcs-ksa
-  namespace: default
-  annotations:
-    iam.gke.io/gcp-service-account: sandbox-gcs-sa@agent-sandbox-476202.iam.gserviceaccount.com

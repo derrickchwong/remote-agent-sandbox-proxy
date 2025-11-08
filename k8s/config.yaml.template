@@ -1,0 +1,14 @@
+# Copy this file to k8s/config.yaml and fill in your project-specific values
+# The config.yaml file will be gitignored and contains your configuration
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sandbox-proxy-config
+  namespace: default
+data:
+  GOOGLE_CLOUD_PROJECT: "your-gcp-project-id"
+  GCS_BUCKET_NAME: "your-gcs-bucket-name"
+  GCS_SERVICE_ACCOUNT: "your-service-account@your-project.iam.gserviceaccount.com"
+  DEFAULT_SANDBOX_IMAGE: "your-registry/your-project/sandbox-runtime:latest"
+  PORT: "8080"

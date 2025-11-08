@@ -3,3 +3,20 @@ dist/
 *.log
 .env
 .DS_Store
+
+# Claude settings
+.claude/
+
+# User-specific Kubernetes configuration (ConfigMap approach - deprecated)
+k8s/config.yaml
+k8s/rbac-user.yaml
+k8s/sandbox-gcs-sa-user.yaml
+cloudbuild-user.yaml
+
+# Kustomize overlays (user-specific)
+k8s/overlays/dev/
+k8s/overlays/prod/
+k8s/overlays/staging/
+k8s/overlays/*/
+
+cloud-build.sh

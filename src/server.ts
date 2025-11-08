@@ -4,8 +4,26 @@ import { Storage } from '@google-cloud/storage';
 
 const app = express();
 const PORT = process.env.PORT || 8080;
-const GCS_BUCKET_NAME = process.env.GCS_BUCKET_NAME || 'agent-sandbox-storage';
-const GCS_SERVICE_ACCOUNT = process.env.GCS_SERVICE_ACCOUNT || 'sandbox-gcs-sa@agent-sandbox-476202.iam.gserviceaccount.com';
+
+// Validate required environment variables
+if (!process.env.GOOGLE_CLOUD_PROJECT) {
+  throw new Error('GOOGLE_CLOUD_PROJECT environment variable is required');
+}
+if (!process.env.GCS_BUCKET_NAME) {
+  throw new Error('GCS_BUCKET_NAME environment variable is required');
+}
+if (!process.env.GCS_SERVICE_ACCOUNT) {
+  throw new Error('GCS_SERVICE_ACCOUNT environment variable is required');
+}
+if (!process.env.DEFAULT_SANDBOX_IMAGE) {
+  throw new Error('DEFAULT_SANDBOX_IMAGE environment variable is required');
+}
+
+// Required environment variables (validated above)
+const GOOGLE_CLOUD_PROJECT = process.env.GOOGLE_CLOUD_PROJECT!;
+const GCS_BUCKET_NAME = process.env.GCS_BUCKET_NAME!;
+const GCS_SERVICE_ACCOUNT = process.env.GCS_SERVICE_ACCOUNT!;
+const DEFAULT_SANDBOX_IMAGE = process.env.DEFAULT_SANDBOX_IMAGE!;
 
 // Middleware to parse JSON
 app.use(express.json());
@@ -246,7 +264,7 @@ app.post('/api/sandboxes', async (req: Request, res: Response) => {
   }
 
   const sandboxUsername = username || 'default';
-  const sandboxImage = image || 'us-central1-docker.pkg.dev/agent-sandbox-476202/agent-sandbox/sandbox-runtime:latest';
+  const sandboxImage = image || DEFAULT_SANDBOX_IMAGE;
   const sandboxNamespace = namespace || 'default';
 
   // Generate Sandbox CRD
@@ -283,7 +301,7 @@ app.post('/api/sandboxes', async (req: Request, res: Response) => {
 {
   "auth": {
     "provider": "vertexai",
-    "projectId": "agent-sandbox-476202",
+    "projectId": "${GOOGLE_CLOUD_PROJECT}",
     "location": "global"
   },
   "mcpServers": {
@@ -329,7 +347,7 @@ chmod 644 /home/gem/.gemini/settings.json`
               ],
               env: [
                 { name: 'GOOGLE_GENAI_USE_VERTEXAI', value: 'true' },
-                { name: 'GOOGLE_CLOUD_PROJECT', value: 'agent-sandbox-476202' },
+                { name: 'GOOGLE_CLOUD_PROJECT', value: GOOGLE_CLOUD_PROJECT },
                 { name: 'GOOGLE_CLOUD_LOCATION', value: 'global' },
               ],
               volumeMounts: [

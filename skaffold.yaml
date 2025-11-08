@@ -1,0 +1,46 @@
+apiVersion: skaffold/v4beta11
+kind: Config
+metadata:
+  name: sandbox-proxy
+
+# Build configuration
+build:
+  artifacts:
+    - image: sandbox-proxy
+      docker:
+        dockerfile: Dockerfile
+  # Use Google Cloud Build or local Docker
+  # googleCloudBuild:
+  #   projectId: your-project-id
+
+# Deploy configuration using Kustomize
+deploy:
+  kustomize:
+    paths:
+      - k8s/overlays/dev  # Default to dev overlay
+
+# Profiles for different environments
+profiles:
+  # Development profile (default)
+  - name: dev
+    deploy:
+      kustomize:
+        paths:
+          - k8s/overlays/dev
+
+  # Production profile
+  - name: prod
+    deploy:
+      kustomize:
+        paths:
+          - k8s/overlays/prod
+    build:
+      googleCloudBuild:
+        projectId: ""  # Set via SKAFFOLD_DEFAULT_REPO or --default-repo
+
+# Port forwarding for local development
+portForward:
+  - resourceType: service
+    resourceName: sandbox-proxy
+    port: 80
+    localPort: 8080
