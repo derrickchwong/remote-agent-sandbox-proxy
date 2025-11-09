@@ -60,8 +60,6 @@ async function ensureNamespaceExists(namespace: string): Promise<void> {
             hard: {
               'requests.cpu': '4',
               'requests.memory': '8Gi',
-              'limits.cpu': '8',
-              'limits.memory': '16Gi',
               persistentvolumeclaims: '5',
               'count/sandboxes.agents.x-k8s.io': '10',
             },
@@ -104,6 +102,21 @@ async function ensureNamespaceExists(namespace: string): Promise<void> {
         console.log(`Network policy created for namespace ${namespace}`);
       } catch (netpolError) {
         console.error(`Failed to create network policy for ${namespace}:`, netpolError);
+      }
+
+      // Create GCS service account with Workload Identity annotation
+      try {
+        await coreApi.createNamespacedServiceAccount(namespace, {
+          metadata: {
+            name: 'sandbox-gcs-ksa',
+            annotations: {
+              'iam.gke.io/gcp-service-account': GCS_SERVICE_ACCOUNT,
+            },
+          },
+        });
+        console.log(`GCS service account created for namespace ${namespace}`);
+      } catch (saError) {
+        console.error(`Failed to create GCS service account for ${namespace}:`, saError);
       }
     } else {
       throw error;
