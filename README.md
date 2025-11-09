@@ -1,47 +1,52 @@
 # Remote Agent Sandbox Proxy
 
-An HTTP proxy service for routing requests to agent sandboxes running in Kubernetes. This proxy enables external clients to interact with sandboxes through a simple path-based routing system.
+An authenticated HTTP proxy service for routing requests to agent sandboxes running in Kubernetes. This proxy enables external clients to securely interact with their own sandboxes through API key authentication and namespace-based isolation.
 
-> **⚠️ PROTOTYPE DISCLAIMER**
->
-> This proxy is a **prototype** and is **NOT production-ready**. It lacks critical security features required for production use:
-> - ❌ **No authentication** - Anyone with network access can use the proxy
-> - ❌ **No authorization** - No access control or user permissions
-> - ❌ **No rate limiting** - Vulnerable to abuse and DoS attacks
-> - ❌ **No request validation** - Limited input sanitization
->
-> **Do not expose this proxy to the public internet without implementing proper security measures.**
->
-> For production use, you must implement:
-> - Authentication (API keys, OAuth, JWT, mutual TLS)
-> - Authorization and access control
-> - Rate limiting and quotas
-> - Request validation and sanitization
-> - Audit logging
-> - Network policies
+## Security Status
+
+✅ **Authentication**: API key-based authentication (SHA-256 hashed)
+✅ **Authorization**: User-based access control - users can only access their own sandboxes
+✅ **Resource Quotas**: Per-user namespace quotas to prevent abuse
+✅ **Network Isolation**: Network policies between user namespaces
+✅ **Audit Logging**: All operations logged to PostgreSQL database
+✅ **Namespace Isolation**: Each user gets their own Kubernetes namespace
+
+⚠️ **Still Recommended for Production**:
+- Rate limiting per API key/user
+- TLS/HTTPS on LoadBalancer
+- Advanced monitoring and alerting
+- Regular security audits
+- Automated backups
 
 ## Architecture
 
 ```
-External Client (Gemini CLI)
-    ↓ HTTP request
+External Client
+    ↓ HTTP request with API key
 Public LoadBalancer (GKE)
     ↓
-Proxy Service (discovers sandboxes via K8s API)
-    ↓ routes based on path: /{username}/{sandboxname}/*
-Sandbox Pods (internal services)
+Proxy Service (validates API key, checks ownership)
+    ├─ PostgreSQL (users, API keys, sandboxes, audit logs)
+    └─ routes to: /proxy/{sandboxname}/*
+         ↓
+User Namespace (user-<username>)
+├─ Resource Quota (4 CPU, 8Gi RAM, max 10 sandboxes)
+├─ Network Policy (isolated from other users)
+└─ Sandbox Pods (internal services)
+    └─ GCS Storage (persistent data)
 ```
 
 ## Features
 
-- **Path-based routing**: Route requests to sandboxes via `/{username}/{sandboxname}/{endpoint}`
-- **Automatic discovery**: Watches Kubernetes for Sandbox resources and updates routing table
-- **Public LoadBalancer**: Accessible from anywhere without port-forwarding
-- **Sandbox management API**: Create, delete, pause, resume sandboxes
-- **GCS persistence**: Sandboxes backed by Google Cloud Storage for persistent data
-- **Health checks**: Built-in health and status endpoints
-- **Lightweight**: Minimal resource footprint
-- **Scalable**: Can run multiple replicas for high availability
+- **🔐 API Key Authentication**: SHA-256 hashed API keys with expiration support
+- **👥 User Management**: Admin API for creating users and managing API keys
+- **🏠 Namespace Isolation**: Each user gets their own Kubernetes namespace
+- **📊 Resource Quotas**: Per-user limits to prevent resource abuse
+- **🔒 Network Policies**: Traffic isolation between user namespaces
+- **📝 Audit Logging**: All operations logged to database
+- **🔄 Sandbox Management**: Create, delete, pause, resume sandboxes
+- **📦 GCS Persistence**: Sandboxes backed by Google Cloud Storage
+- **🚀 Scalable**: Can run multiple replicas for high availability
 
 ## Prerequisites
 
@@ -55,7 +60,10 @@ Sandbox Pods (internal services)
 
 ## Quick Start
 
-Deploy using **Cloud Build** - one command builds the image and deploys to your GKE cluster.
+**📚 For complete deployment instructions, see [DEPLOYMENT.md](./DEPLOYMENT.md)**
+**📖 For API documentation, see [API_USAGE.md](./API_USAGE.md)**
+
+Deploy using **Cloud Build** - builds the image, deploys PostgreSQL and proxy to your GKE cluster.
 
 ### 1. Setup GCS Storage
 
@@ -126,14 +134,57 @@ kubectl get service sandbox-proxy
 # sandbox-proxy   LoadBalancer   10.100.200.50   35.123.45.67     80:32000/TCP   2m
 ```
 
-### 6. Test the Proxy
+### 6. Bootstrap Authentication
 
 ```bash
-# Health check
-curl http://EXTERNAL-IP/health
+# Wait for PostgreSQL to be ready
+kubectl wait --for=condition=ready pod -l app=postgres --timeout=300s
 
-# List sandboxes
-curl http://EXTERNAL-IP/api/sandboxes
+# Run bootstrap script (generates admin key, creates admin user)
+./scripts/bootstrap-admin.sh
+
+# Restart proxy to pick up admin key
+kubectl rollout restart deployment/sandbox-proxy
+kubectl rollout status deployment/sandbox-proxy
+```
+
+**Save the admin API key shown by the bootstrap script!**
+
+### 7. Create Your First User
+
+```bash
+export PROXY_IP=$(kubectl get svc sandbox-proxy -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+export ADMIN_API_KEY="<key-from-bootstrap>"
+
+# Create user
+curl -X POST http://$PROXY_IP/api/admin/users \
+  -H "Authorization: Bearer $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"alice","email":"alice@example.com"}'
+
+# Generate API key for user (save the user ID from above response)
+curl -X POST http://$PROXY_IP/api/admin/users/<USER_ID>/apikeys \
+  -H "Authorization: Bearer $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Alice primary key"}'
+```
+
+**Save the user API key! It's only shown once.**
+
+### 8. User Creates Sandbox
+
+```bash
+export USER_API_KEY="<key-from-above>"
+
+# Create sandbox (automatically creates user-alice namespace)
+curl -X POST http://$PROXY_IP/api/sandboxes \
+  -H "Authorization: Bearer $USER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"my-sandbox"}'
+
+# List sandboxes (shows only user's sandboxes)
+curl http://$PROXY_IP/api/sandboxes \
+  -H "Authorization: Bearer $USER_API_KEY"
 ```
 
 ---
@@ -158,74 +209,105 @@ All configuration is passed via Cloud Build substitutions:
 
 ---
 
+## Documentation
+
+- **[DEPLOYMENT.md](./DEPLOYMENT.md)** - Complete deployment guide with troubleshooting
+- **[API_USAGE.md](./API_USAGE.md)** - Comprehensive API reference with examples
+- **[ARCHITECTURE_AUTH.md](./ARCHITECTURE_AUTH.md)** - Architecture and design decisions
+
 ## File Structure
 
 ```
 remote-agent-sandbox-proxy/
 ├── src/
-│   └── server.ts                      # Proxy server code
+│   ├── server.ts                      # Main server
+│   ├── db/
+│   │   ├── pool.ts                    # Database connection pool
+│   │   └── queries/                   # Database query functions
+│   │       ├── users.ts
+│   │       ├── apiKeys.ts
+│   │       ├── sandboxes.ts
+│   │       └── auditLogs.ts
+│   ├── middleware/
+│   │   ├── auth.ts                    # Authentication middleware
+│   │   └── authorize.ts               # Authorization middleware
+│   ├── routes/
+│   │   ├── admin.ts                   # Admin API routes
+│   │   ├── user.ts                    # User self-service routes
+│   │   ├── sandboxes.ts               # Sandbox management routes
+│   │   └── proxy.ts                   # Proxy routes
+│   └── utils/
+│       └── crypto.ts                  # API key generation/hashing
 ├── k8s/
-│   ├── base/                          # Base Kubernetes resources
-│   │   ├── deployment.yaml            # Deployment + Service
+│   ├── base/
+│   │   ├── deployment.yaml            # Proxy deployment + service
+│   │   ├── postgres.yaml              # PostgreSQL StatefulSet + service
+│   │   ├── postgres-secret.yaml       # Database credentials
+│   │   ├── admin-secret.yaml          # Admin API key
 │   │   ├── rbac.yaml                  # RBAC configuration
 │   │   ├── sandbox-gcs-sa.yaml        # GCS ServiceAccount
 │   │   └── kustomization.yaml         # Kustomize base
-│   └── overlays/
-│       └── kustomization.yaml.template  # Template (for reference)
-├── cloudbuild.yaml                    # Cloud Build CI/CD pipeline
-├── setup-gcs-storage.sh               # GCS setup script
+│   └── overlays/                      # Generated by Cloud Build
+├── scripts/
+│   ├── bootstrap-admin.sh             # Bootstrap admin credentials
+│   └── generate-admin-key.sh          # Generate admin API key
+├── cloudbuild.yaml                    # Cloud Build CI/CD
+├── DEPLOYMENT.md                      # Deployment guide
+├── API_USAGE.md                       # API documentation
+├── ARCHITECTURE_AUTH.md               # Architecture documentation
 └── README.md                          # This file
 ```
-
-**Note:** The `k8s/overlays/` directory is gitignored. Cloud Build generates the overlay dynamically during deployment.
 
 ---
 
 ## API Endpoints
 
-### Health Check
-```
-GET /health
-```
+**📖 For complete API documentation with examples, see [API_USAGE.md](./API_USAGE.md)**
 
-Returns proxy status and number of discovered sandboxes.
+### Public Endpoints
 
-**Response:**
-```json
-{
-  "status": "ok",
-  "sandboxes": 3,
-  "timestamp": "2025-10-31T10:30:00.000Z"
-}
+```
+GET /health  # No authentication required
 ```
 
-### Management API
+### Admin API (requires admin API key)
 
-#### List All Sandboxes
 ```
-GET /api/sandboxes
-```
+POST   /api/admin/users                    # Create user
+GET    /api/admin/users                    # List users
+GET    /api/admin/users/:userId            # Get user details
+PUT    /api/admin/users/:userId            # Update user
+DELETE /api/admin/users/:userId            # Delete user
 
-Returns all sandboxes with detailed information.
-
-#### Get Sandbox Status
-```
-GET /api/sandboxes/:username/:name
-```
-
-Returns status for a specific sandbox.
-
-#### Create Sandbox
-```
-POST /api/sandboxes
+POST   /api/admin/users/:userId/apikeys    # Generate API key for user
+GET    /api/admin/users/:userId/apikeys    # List user's API keys
+DELETE /api/admin/apikeys/:keyId           # Revoke API key
 ```
 
-**Request:**
-```json
-{
-  "name": "my-sandbox",
-  "username": "alice",
-  "image": "us-central1-docker.pkg.dev/project/repo/sandbox-runtime:latest",
+### User Self-Service API (requires user API key)
+
+```
+GET    /api/me                             # Get own info
+POST   /api/me/apikeys                     # Generate own API key
+GET    /api/me/apikeys                     # List own API keys
+DELETE /api/me/apikeys/:keyId              # Revoke own API key
+```
+
+### Sandbox Management API (requires user API key)
+
+```
+GET    /api/sandboxes          # List user's sandboxes
+POST   /api/sandboxes          # Create sandbox
+GET    /api/sandboxes/:name    # Get sandbox status
+DELETE /api/sandboxes/:name    # Delete sandbox
+POST   /api/sandboxes/:name/pause    # Pause sandbox
+POST   /api/sandboxes/:name/resume   # Resume sandbox
+```
+
+### Proxy API (requires user API key)
+
+```
+ALL    /proxy/:sandboxname/*   # Proxy to sandbox
   "namespace": "default"
 }
 ```
