@@ -1,6 +1,7 @@
 import express, { Response } from 'express';
 import * as k8s from '@kubernetes/client-node';
 import { Storage } from '@google-cloud/storage';
+import { google } from 'googleapis';
 import { authenticate, AuthenticatedRequest } from '../middleware/auth.js';
 import { authorizeSandboxAccess } from '../middleware/authorize.js';
 import {
@@ -32,9 +33,12 @@ const DEFAULT_SANDBOX_IMAGE = process.env.DEFAULT_SANDBOX_IMAGE!;
 
 // Helper: Create namespace with resource quotas and network policies
 async function ensureNamespaceExists(namespace: string): Promise<void> {
+  let namespaceExists = false;
+
   try {
     await coreApi.readNamespace(namespace);
     console.log(`Namespace ${namespace} already exists`);
+    namespaceExists = true;
   } catch (error: any) {
     if (error.statusCode === 404) {
       // Namespace doesn't exist, create it
@@ -49,6 +53,7 @@ async function ensureNamespaceExists(namespace: string): Promise<void> {
         },
       });
       console.log(`Namespace ${namespace} created`);
+      namespaceExists = true;
 
       // Create resource quota for the namespace
       try {
@@ -103,23 +108,38 @@ async function ensureNamespaceExists(namespace: string): Promise<void> {
       } catch (netpolError) {
         console.error(`Failed to create network policy for ${namespace}:`, netpolError);
       }
-
-      // Create GCS service account with Workload Identity annotation
-      try {
-        await coreApi.createNamespacedServiceAccount(namespace, {
-          metadata: {
-            name: 'sandbox-gcs-ksa',
-            annotations: {
-              'iam.gke.io/gcp-service-account': GCS_SERVICE_ACCOUNT,
-            },
-          },
-        });
-        console.log(`GCS service account created for namespace ${namespace}`);
-      } catch (saError) {
-        console.error(`Failed to create GCS service account for ${namespace}:`, saError);
-      }
     } else {
       throw error;
+    }
+  }
+
+  // Ensure GCS service account exists (regardless of whether namespace is new)
+  if (namespaceExists) {
+    try {
+      await coreApi.readNamespacedServiceAccount('sandbox-gcs-ksa', namespace);
+      console.log(`GCS service account already exists for namespace ${namespace}`);
+    } catch (saReadError: any) {
+      if (saReadError.statusCode === 404) {
+        // Service account doesn't exist, create it
+        try {
+          await coreApi.createNamespacedServiceAccount(namespace, {
+            metadata: {
+              name: 'sandbox-gcs-ksa',
+              annotations: {
+                'iam.gke.io/gcp-service-account': GCS_SERVICE_ACCOUNT,
+              },
+            },
+          });
+          console.log(`GCS service account created for namespace ${namespace}`);
+
+          // Add Workload Identity IAM binding
+          await addWorkloadIdentityBinding(namespace);
+        } catch (saError) {
+          console.error(`Failed to create GCS service account for ${namespace}:`, saError);
+        }
+      } else {
+        console.error(`Error checking GCS service account for ${namespace}:`, saReadError);
+      }
     }
   }
 }
@@ -141,6 +161,61 @@ async function createGCSFolder(folderPath: string): Promise<void> {
     }
   } catch (error) {
     console.error(`Error creating GCS folder ${folderPath}:`, error);
+    throw error;
+  }
+}
+
+// Helper: Add Workload Identity IAM binding
+async function addWorkloadIdentityBinding(namespace: string): Promise<void> {
+  try {
+    const auth = new google.auth.GoogleAuth({
+      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+    });
+    const iam = google.iam({ version: 'v1', auth });
+
+    const serviceAccountEmail = GCS_SERVICE_ACCOUNT;
+    const member = `serviceAccount:${GOOGLE_CLOUD_PROJECT}.svc.id.goog[${namespace}/sandbox-gcs-ksa]`;
+    const role = 'roles/iam.workloadIdentityUser';
+
+    // Get current IAM policy
+    const getResponse = await iam.projects.serviceAccounts.getIamPolicy({
+      resource: `projects/-/serviceAccounts/${serviceAccountEmail}`,
+    });
+
+    const policy = getResponse.data;
+    const bindings = policy.bindings || [];
+
+    // Check if binding already exists
+    let roleBinding = bindings.find((b) => b.role === role);
+    if (!roleBinding) {
+      roleBinding = { role, members: [] };
+      bindings.push(roleBinding);
+    }
+
+    if (!roleBinding.members) {
+      roleBinding.members = [];
+    }
+
+    if (!roleBinding.members.includes(member)) {
+      roleBinding.members.push(member);
+
+      // Set the updated policy
+      await iam.projects.serviceAccounts.setIamPolicy({
+        resource: `projects/-/serviceAccounts/${serviceAccountEmail}`,
+        requestBody: {
+          policy: {
+            ...policy,
+            bindings,
+          },
+        },
+      });
+
+      console.log(`Added Workload Identity binding for ${namespace}`);
+    } else {
+      console.log(`Workload Identity binding already exists for ${namespace}`);
+    }
+  } catch (error) {
+    console.error(`Error adding Workload Identity binding for ${namespace}:`, error);
     throw error;
   }
 }
