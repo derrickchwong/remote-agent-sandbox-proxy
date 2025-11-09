@@ -7,6 +7,7 @@ resources:
   - sandbox-gcs-sa.yaml
   - postgres-secret.yaml
   - postgres.yaml
+  - admin-secret.yaml
 
 # Default namespace
 namespace: default

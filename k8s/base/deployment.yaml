@@ -47,6 +47,11 @@ spec:
             secretKeyRef:
               name: postgres-credentials
               key: POSTGRES_PASSWORD
+        - name: ADMIN_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: admin-credentials
+              key: ADMIN_API_KEY
         livenessProbe:
           httpGet:
             path: /health
