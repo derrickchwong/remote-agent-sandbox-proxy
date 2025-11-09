@@ -19,6 +19,7 @@ kc.loadFromDefault();
 
 const k8sApi = kc.makeApiClient(k8s.CustomObjectsApi);
 const coreApi = kc.makeApiClient(k8s.CoreV1Api);
+const networkingApi = kc.makeApiClient(k8s.NetworkingV1Api);
 
 // Google Cloud Storage client setup
 const storage = new Storage();
@@ -29,7 +30,7 @@ const GCS_BUCKET_NAME = process.env.GCS_BUCKET_NAME!;
 const GCS_SERVICE_ACCOUNT = process.env.GCS_SERVICE_ACCOUNT!;
 const DEFAULT_SANDBOX_IMAGE = process.env.DEFAULT_SANDBOX_IMAGE!;
 
-// Helper: Create namespace if it doesn't exist
+// Helper: Create namespace with resource quotas and network policies
 async function ensureNamespaceExists(namespace: string): Promise<void> {
   try {
     await coreApi.readNamespace(namespace);
@@ -48,6 +49,62 @@ async function ensureNamespaceExists(namespace: string): Promise<void> {
         },
       });
       console.log(`Namespace ${namespace} created`);
+
+      // Create resource quota for the namespace
+      try {
+        await coreApi.createNamespacedResourceQuota(namespace, {
+          metadata: {
+            name: 'user-quota',
+          },
+          spec: {
+            hard: {
+              'requests.cpu': '4',
+              'requests.memory': '8Gi',
+              'limits.cpu': '8',
+              'limits.memory': '16Gi',
+              persistentvolumeclaims: '5',
+              'count/sandboxes.agents.x-k8s.io': '10',
+            },
+          },
+        });
+        console.log(`Resource quota created for namespace ${namespace}`);
+      } catch (quotaError) {
+        console.error(`Failed to create resource quota for ${namespace}:`, quotaError);
+      }
+
+      // Create network policy to isolate namespace
+      try {
+        await networkingApi.createNamespacedNetworkPolicy(namespace, {
+          metadata: {
+            name: 'allow-from-default',
+          },
+          spec: {
+            podSelector: {},
+            policyTypes: ['Ingress'],
+            ingress: [
+              {
+                // Allow traffic from default namespace (where proxy runs)
+                from: [
+                  {
+                    namespaceSelector: {
+                      matchLabels: {
+                        'kubernetes.io/metadata.name': 'default',
+                      },
+                    },
+                  },
+                  // Allow traffic within same namespace
+                  {
+                    podSelector: {},
+                  },
+                ],
+              },
+            ],
+          },
+        });
+        console.log(`Network policy created for namespace ${namespace}`);
+      } catch (netpolError) {
+        console.error(`Failed to create network policy for ${namespace}:`, netpolError);
+      }
     } else {
       throw error;
     }
