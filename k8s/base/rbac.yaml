@@ -14,12 +14,30 @@ kind: ClusterRole
 metadata:
   name: sandbox-proxy-role
 rules:
+# Sandbox CRD management
 - apiGroups: ["agents.x-k8s.io"]
   resources: ["sandboxes"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Core resources
 - apiGroups: [""]
   resources: ["services", "pods"]
   verbs: ["get", "list"]
+# Namespace management (for user namespaces)
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "list", "create", "delete"]
+# Resource quotas (for user namespace limits)
+- apiGroups: [""]
+  resources: ["resourcequotas"]
+  verbs: ["get", "list", "create", "update", "delete"]
+# Network policies (for user namespace isolation)
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["get", "list", "create", "update", "delete"]
+# Service accounts (for GCS Workload Identity)
+- apiGroups: [""]
+  resources: ["serviceaccounts"]
+  verbs: ["get", "list", "create", "update", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

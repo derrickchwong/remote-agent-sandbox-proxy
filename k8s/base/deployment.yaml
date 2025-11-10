@@ -27,6 +27,31 @@ spec:
         envFrom:
         - configMapRef:
             name: sandbox-proxy-config
+        env:
+        - name: DB_HOST
+          value: postgres.default.svc.cluster.local
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: POSTGRES_PASSWORD
+        - name: ADMIN_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: admin-credentials
+              key: ADMIN_API_KEY
         livenessProbe:
           httpGet:
             path: /health
